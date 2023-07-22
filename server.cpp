@@ -5,6 +5,7 @@
 #include <iostream>
 #include <cstring>
 #include <thread>
+#include <map>
 
 class TCPServer
 {
@@ -44,6 +45,7 @@ private:
     int port_;
     int clientCount_ = 0;
 
+    std::map<std::string, int> clientConnections_; // Map to track client connections.
     bool CreateSocket()
     {
         serverSocket_ = socket(AF_INET, SOCK_STREAM, 0);
@@ -74,6 +76,20 @@ private:
             std::cerr << "Failed to accept client connection." << std::endl;
             return;
         }
+
+        char clientAddressStr[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &(clientAddress_.sin_addr), clientAddressStr, INET_ADDRSTRLEN);
+
+        if (IsRateLimited(clientAddressStr))
+        {
+            std::cerr << "Rate limited connection from client: " << clientAddressStr << std::endl;
+            close(clientSocket);
+            return;
+        }
+
+        // Increment the connection count for this client IP.
+        clientConnections_[clientAddressStr]++;
+
         ++clientCount_;
         std::cout << "New client connected. Client count : " << clientCount_ << std::endl;
 
@@ -109,7 +125,7 @@ private:
                 break;
             }
 
-            std::cout << "Client " << clientNumber <<" says: " << buffer << std::endl;
+            std::cout << "Client " << clientNumber << " says: " << buffer << std::endl;
 
             if (std::strcmp(buffer, "bye") == 0)
             {
@@ -133,6 +149,32 @@ private:
         close(clientSocket);
         std::cout << "Client " << clientNumber << " disconnected." << std::endl;
         --clientCount_;
+    }
+
+    bool IsRateLimited(const std::string &clientAddressStr)
+    {
+        const int maxConnectionsPerIP = 5;  // Maximum allowed connections per IP.
+        const int timeWindowInSeconds = 60; // Time window to count connections (in seconds).
+
+        // Check if the IP exists in the map.
+        if (clientConnections_.find(clientAddressStr) != clientConnections_.end())
+        {
+            // Get the last connection time for the IP.
+            time_t lastConnectionTime = clientConnections_[clientAddressStr];
+
+            // Check if the time since the last connection exceeds the time window.
+            time_t currentTime = time(nullptr);
+            if (currentTime - lastConnectionTime < timeWindowInSeconds)
+            {
+                // If the IP has exceeded the maximum connections, return true (rate limited).
+                if (clientConnections_[clientAddressStr] >= maxConnectionsPerIP)
+                    return true;
+            }
+        }
+
+        // If the IP is not in the map or has not exceeded the rate limit, update the last connection time.
+        clientConnections_[clientAddressStr] = time(nullptr);
+        return false;
     }
 
     void CloseSocket()

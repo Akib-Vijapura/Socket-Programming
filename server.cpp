@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <iostream>
 #include <cstring>
+#include <thread>
 
 class TCPServer
 {
@@ -36,14 +37,12 @@ public:
         {
             AcceptClientConnection();
         }
-
-        CloseSocket();
     }
 
 private:
     int serverSocket_;
     int port_;
-    sockaddr_in clientAddress_;
+    int clientCount_ = 0;
 
     bool CreateSocket()
     {
@@ -62,7 +61,7 @@ private:
 
     bool ListenForConnections()
     {
-        return listen(serverSocket_, 2) != -1;
+        return listen(serverSocket_, 5) != -1;
     }
 
     void AcceptClientConnection()
@@ -75,10 +74,11 @@ private:
             std::cerr << "Failed to accept client connection." << std::endl;
             return;
         }
+        ++clientCount_;
+        std::cout << "New client connected. Client count : " << clientCount_ << std::endl;
 
-        HandleClientConnection(clientSocket);
-
-        close(clientSocket);
+        std::thread clientThread(&TCPServer::HandleClientConnection, this, clientSocket);
+        clientThread.detach();
     }
 
     void HandleClientConnection(int clientSocket)
@@ -87,10 +87,14 @@ private:
         inet_ntop(AF_INET, &(clientAddress_.sin_addr), clientAddressStr, INET_ADDRSTRLEN);
         std::cout << "Client connected: " << clientAddressStr << std::endl;
 
-        const char *message = "Hello, client!";
-        if (send(clientSocket, message, std::strlen(message), 0) == -1)
+        const char *message = "Hello, client! Welcome to the chat. Type 'bye' to disconnect.\n";
+        std::string clientNumber = std::to_string(clientCount_);
+        std::string fullMessage = message + clientNumber;
+
+        if (send(clientSocket, fullMessage.c_str(), std::strlen(fullMessage.c_str()), 0) == -1)
         {
             std::cerr << "Failed to send message to client." << std::endl;
+            close(clientSocket);
             return;
         }
 
@@ -105,11 +109,11 @@ private:
                 break;
             }
 
-            std::cout << "Client says: " << buffer << std::endl;
+            std::cout << "Client " << clientNumber <<" says: " << buffer << std::endl;
 
             if (std::strcmp(buffer, "bye") == 0)
             {
-                std::cout << "Client initiated disconnect." << std::endl;
+                std::cout << "Client " << clientNumber << " initiated disconnect." << std::endl;
                 send(clientSocket, buffer, std::strlen(buffer), 0);
                 break;
             }
@@ -117,19 +121,18 @@ private:
             std::memset(buffer, 0, sizeof(buffer));
 
             std::cout << "Server says: ";
-            std::cin.getline(buffer, sizeof(buffer)); // change to goodBye
+            std::cin.getline(buffer, sizeof(buffer));
 
             if (send(clientSocket, buffer, std::strlen(buffer), 0) == -1)
             {
                 std::cerr << "Failed to send message to client." << std::endl;
                 break;
             }
-            else
-            {
-                std::memset(buffer, 0, sizeof(buffer));
-            }
         }
-        sleep(5);
+
+        close(clientSocket);
+        std::cout << "Client " << clientNumber << " disconnected." << std::endl;
+        --clientCount_;
     }
 
     void CloseSocket()
@@ -138,6 +141,7 @@ private:
     }
 
     sockaddr_in serverAddress_;
+    sockaddr_in clientAddress_;
 };
 
 int main()
